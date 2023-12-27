@@ -1,0 +1,67 @@
+ARG VERSION=latest
+FROM ubuntu:$VERSION
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run apt update && apt install -y ca-certificates jq p7zip-full curl
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    { yes | unminimize && apt install -y gnupg apt-utils apt-transport-https \
+        git wget websockify \
+        build-essential g++ gdb libtool valgrind clang \
+        sudo ssh rsync htop less lsof mc ncdu cpulimit duf fd-find \
+        asciinema man-db bash-completion command-not-found zsh \
+        iproute2 iputils-tracepath iputils-ping traceroute \
+        make cmake ninja-build autoconf automake \
+        locales-all tzdata language-selector-common \
+        vim nano dos2unix && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list && \
+    apt update && apt install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin $(check-language-support -l en_US) $(check-language-support -l zh_CN) && \
+    apt autoremove -y && apt clean && rm -rf /var/lib/apt/lists/*; } & \
+    \
+    { cd /usr/local && curl -fsSLo Clion.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=CL&latest=true&type=release" | jq -r ".CL[0].downloads.linux.link") && \
+    taskset -ac 1-31 tar xf Clion.tar.gz && rm Clion.tar.gz && \
+    export CLION_RELEASE_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=CL&latest=true&type=release" | jq -r ".CL[0].build") && \
+    export CLION_EAP_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=CL&latest=true&type=eap" | jq -r ".CL[0].build") && \
+    export CLION_RC_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=CL&latest=true&type=rc" | jq -r ".CL[0].build") && \
+    export CLION_LATEST_BUILD=$(/usr/bin/echo -e "$CLION_RELEASE_BUILD\n$CLION_EAP_BUILD\n$CLION_RC_BUILD" | sort -rV | head -n 1) && \
+    if [ "$CLION_EAP_BUILD" = "$CLION_LATEST_BUILD" ]; then \
+        curl -fsSLo Clion.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=CL&latest=true&type=eap" | jq -r ".CL[0].downloads.linux.link"); \
+    elif [ "$CLION_RC_BUILD" = "$CLION_LATEST_BUILD" ]; then \
+        curl -fsSLo Clion.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=CL&latest=true&type=rc" | jq -r ".CL[0].downloads.linux.link"); \
+    fi && ((taskset -ac 1-31 tar xf Clion.tar.gz && rm Clion.tar.gz ) || true); } & wait
+
+VOLUME /root
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    (adduser --disabled-password --gecos "" --uid 1000 container && usermod -aG sudo container) || (usermod -l container -d /home/container -m ubuntu && groupmod -n container ubuntu) && \
+    mkdir -p /etc/sudoers.d && \
+    echo "container ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/user && \
+    chmod 0440 /etc/sudoers.d/user && \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata && \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    sed 's/#force_color_prompt=yes/force_color_prompt=yes/' -i /root/.bashrc && \
+    sed 's/plugins=(git)/plugins=(git command-not-found)/' -i /root/.zshrc && \
+    for dir in /usr/local/*; do if [ -f $dir/bin/remote-dev-server.sh ]; then $dir/bin/remote-dev-server.sh registerBackendLocationForGateway; fi; done && \
+    chsh -s /usr/bin/zsh && chsh -s /usr/bin/zsh container
+
+ADD --chown=1000:1000 start.sh sshd_config README.md /home/container/
+
+USER container
+WORKDIR /home/container
+VOLUME /home/container
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    sed 's/#force_color_prompt=yes/force_color_prompt=yes/' -i /home/container/.bashrc && \
+    sed 's/plugins=(git)/plugins=(git command-not-found)/' -i /home/container/.zshrc && \
+    for dir in /usr/local/*; do if [ -f $dir/bin/remote-dev-server.sh ]; then $dir/bin/remote-dev-server.sh registerBackendLocationForGateway; fi; done && \
+    mkdir .ssh && touch .ssh/authorized_keys && chmod 0700 .ssh && chmod 0600 .ssh/authorized_keys
+
+EXPOSE 2222/tcp
+EXPOSE 8022/tcp
+ENTRYPOINT []
+CMD ["/usr/bin/bash", "/home/container/start.sh"]

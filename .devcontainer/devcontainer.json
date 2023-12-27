@@ -1,0 +1,6 @@
+{
+  "name": "Devcontainer",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "main"
+}
+

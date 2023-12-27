@@ -1,0 +1,72 @@
+ARG VERSION=latest
+FROM ubuntu:$VERSION
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run apt update && apt install -y ca-certificates jq p7zip-full curl
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    { yes | unminimize && apt install -y gnupg apt-utils apt-transport-https \
+        git wget websockify \
+        build-essential libtool valgrind \
+        sudo ssh rsync htop less lsof mc ncdu cpulimit duf fd-find \
+        asciinema man-db bash-completion command-not-found zsh \
+        iproute2 iputils-tracepath iputils-ping traceroute \
+        make ninja-build autoconf automake \
+        locales-all tzdata language-selector-common \
+        vim nano dos2unix && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
+    curl -fsSLo jdk-21_linux-x64_bin.deb https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.deb && \
+    apt update && apt install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin nodejs ./jdk-21_linux-x64_bin.deb $(check-language-support -l en_US) $(check-language-support -l zh_CN) && \
+    apt autoremove -y && apt clean && rm -rf /var/lib/apt/lists/* && rm jdk-21_linux-x64_bin.deb && corepack enable; } & \
+    \
+    { cd /usr/local && curl -fsSLo graalvm-jdk-21_linux-x64_bin.tar.gz https://download.oracle.com/graalvm/21/latest/graalvm-jdk-21_linux-x64_bin.tar.gz && \
+    taskset -ac 1-31 tar xf graalvm-jdk-21_linux-x64_bin.tar.gz && rm graalvm-jdk-21_linux-x64_bin.tar.gz && \
+    curl -fsSLo ideaU.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=release" | jq -r ".IIU[0].downloads.linux.link") && \
+    taskset -ac 1-31 tar xf ideaU.tar.gz && rm ideaU.tar.gz && \
+    export IDEA_RELEASE_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=release" | jq -r ".IIU[0].build") && \
+    export IDEA_EAP_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=eap" | jq -r ".IIU[0].build") && \
+    export IDEA_RC_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=rc" | jq -r ".IIU[0].build") && \
+    export IDEA_LATEST_BUILD=$(/usr/bin/echo -e "$IDEA_RELEASE_BUILD\n$IDEA_EAP_BUILD\n$IDEA_RC_BUILD" | sort -rV | head -n 1) && \
+    if [ "$IDEA_EAP_BUILD" = "$IDEA_LATEST_BUILD" ]; then \
+        curl -fsSLo ideaU.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=eap" | jq -r ".IIU[0].downloads.linux.link"); \
+    elif [ "$IDEA_RC_BUILD" = "$IDEA_LATEST_BUILD" ]; then \
+        curl -fsSLo ideaU.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=rc" | jq -r ".IIU[0].downloads.linux.link"); \
+    fi && ((taskset -ac 1-31 tar xf ideaU.tar.gz && rm ideaU.tar.gz) || true); } & wait
+
+VOLUME /root
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    (adduser --disabled-password --gecos "" --uid 1000 container && usermod -aG sudo container) || (usermod -l container -d /home/container -m ubuntu && groupmod -n container ubuntu) && \
+    mkdir -p /etc/sudoers.d && \
+    echo "container ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/user && \
+    chmod 0440 /etc/sudoers.d/user && \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata && \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    sed 's/#force_color_prompt=yes/force_color_prompt=yes/' -i /root/.bashrc && \
+    sed 's/plugins=(git)/plugins=(git command-not-found)/' -i /root/.zshrc && \
+    for dir in /usr/local/*; do if [ -f $dir/bin/remote-dev-server.sh ]; then $dir/bin/remote-dev-server.sh registerBackendLocationForGateway; fi; done && \
+    chsh -s /usr/bin/zsh && chsh -s /usr/bin/zsh container
+
+ADD --chown=1000:1000 start.sh sshd_config README.md /home/container/
+
+USER container
+WORKDIR /home/container
+VOLUME /home/container
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    sed 's/#force_color_prompt=yes/force_color_prompt=yes/' -i /home/container/.bashrc && \
+    sed 's/plugins=(git)/plugins=(git command-not-found)/' -i /home/container/.zshrc && \
+    for dir in /usr/local/*; do if [ -f $dir/bin/remote-dev-server.sh ]; then $dir/bin/remote-dev-server.sh registerBackendLocationForGateway; fi; done && \
+    mkdir .ssh && touch .ssh/authorized_keys && chmod 0700 .ssh && chmod 0600 .ssh/authorized_keys
+
+EXPOSE 2222/tcp
+EXPOSE 8022/tcp
+ENTRYPOINT []
+CMD ["/usr/bin/bash", "/home/container/start.sh"]

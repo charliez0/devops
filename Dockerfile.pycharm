@@ -1,0 +1,74 @@
+ARG VERSION=latest
+FROM ubuntu:$VERSION
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    apt update && apt install -y apt-transport-https ca-certificates jq p7zip-full curl gnupg && \
+    curl -fsSL https://repo.anaconda.com/pkgs/misc/gpgkeys/anaconda.asc | gpg --dearmor -o /etc/apt/keyrings/conda-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/conda-archive-keyring.gpg] https://repo.anaconda.com/pkgs/misc/debrepo/conda stable main" | tee -a /etc/apt/sources.list.d/conda.list && \
+    apt update && apt install -y conda
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    { yes | unminimize && apt install -y apt-utils \
+        git wget websockify \
+        build-essential gdb libtool valgrind \
+        sudo ssh rsync htop less lsof mc ncdu cpulimit duf fd-find \
+        asciinema man-db bash-completion command-not-found zsh \
+        iproute2 iputils-tracepath iputils-ping traceroute \
+        make cmake ninja-build autoconf automake libjpeg-dev libpng-dev \
+        locales-all tzdata language-selector-common \
+        vim nano dos2unix && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list && \
+    apt update && apt install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin $(check-language-support -l en_US) $(check-language-support -l zh_CN) && \
+    apt autoremove -y && apt clean && rm -rf /var/lib/apt/lists/*; } & \
+    \
+    { /opt/conda/bin/conda install anaconda -y && /opt/conda/bin/conda clean -ya; } & \
+    \
+    { cd /usr/local && curl -fsSLo Pycharm.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=PCP&latest=true&type=release" | jq -r ".PCP[0].downloads.linux.link") && \
+    taskset -ac 1-31 tar xf Pycharm.tar.gz && rm Pycharm.tar.gz && \
+    export PYCHARM_RELEASE_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=PCP&latest=true&type=release" | jq -r ".PCP[0].build") && \
+    export PYCHARM_EAP_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=PCP&latest=true&type=eap" | jq -r ".PCP[0].build") && \
+    export PYCHARM_RC_BUILD=$(curl -s "https://data.services.jetbrains.com/products/releases?code=PCP&latest=true&type=rc" | jq -r ".PCP[0].build") && \
+    export PYCHARM_LATEST_BUILD=$(/usr/bin/echo -e "$PYCHARM_RELEASE_BUILD\n$PYCHARM_EAP_BUILD\n$PYCHARM_RC_BUILD" | sort -rV | head -n 1) && \
+    if [ "$PYCHARM_EAP_BUILD" = "$PYCHARM_LATEST_BUILD" ]; then \
+        curl -fsSLo Pycharm.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=PCP&latest=true&type=eap" | jq -r ".PCP[0].downloads.linux.link"); \
+    elif [ "$PYCHARM_RC_BUILD" = "$PYCHARM_LATEST_BUILD" ]; then \
+        curl -fsSLo Pycharm.tar.gz $(curl -s "https://data.services.jetbrains.com/products/releases?code=PCP&latest=true&type=rc" | jq -r ".PCP[0].downloads.linux.link"); \
+    fi && ((taskset -ac 1-31 tar xf Pycharm.tar.gz && rm Pycharm.tar.gz ) || true); } & wait
+
+VOLUME /root
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    (adduser --disabled-password --gecos "" --uid 1000 container && usermod -aG sudo container) || (usermod -l container -d /home/container -m ubuntu && groupmod -n container ubuntu) && \
+    mkdir -p /etc/sudoers.d && \
+    echo "container ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/user && \
+    chmod 0440 /etc/sudoers.d/user && \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata && \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    sed 's/#force_color_prompt=yes/force_color_prompt=yes/' -i /root/.bashrc && \
+    sed 's/plugins=(git)/plugins=(git command-not-found)/' -i /root/.zshrc && \
+    for dir in /usr/local/*; do if [ -f $dir/bin/remote-dev-server.sh ]; then $dir/bin/remote-dev-server.sh registerBackendLocationForGateway; fi; done && \
+    chsh -s /usr/bin/zsh && chsh -s /usr/bin/zsh container
+
+ADD --chown=1000:1000 start.sh sshd_config README.md /home/container/
+
+USER container
+WORKDIR /home/container
+VOLUME /home/container
+
+RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/run \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    sed 's/#force_color_prompt=yes/force_color_prompt=yes/' -i /home/container/.bashrc && \
+    sed 's/plugins=(git)/plugins=(git command-not-found)/' -i /home/container/.zshrc && \
+    for dir in /usr/local/*; do if [ -f $dir/bin/remote-dev-server.sh ]; then $dir/bin/remote-dev-server.sh registerBackendLocationForGateway; fi; done && \
+    mkdir .ssh && touch .ssh/authorized_keys && chmod 0700 .ssh && chmod 0600 .ssh/authorized_keys
+
+EXPOSE 2222/tcp
+EXPOSE 8022/tcp
+ENTRYPOINT []
+CMD ["/usr/bin/bash", "/home/container/start.sh"]

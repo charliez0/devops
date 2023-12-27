@@ -1,0 +1,19 @@
+{
+  "setupTasks": [],
+  "tasks": {
+    "console": {
+      "name": "console",
+      "command": "CSB_RUN_OUTSIDE_CONTAINER=1 docker logs devcontainer && docker attach devcontainer",
+      "runAtStart": true
+    },
+    "exec": {
+      "name": "exec",
+      "command": "CSB_RUN_OUTSIDE_CONTAINER=1 docker exec -it devcontainer bash --login"
+    },
+    "inspect": {
+      "name": "inspect",
+      "command": "CSB_RUN_OUTSIDE_CONTAINER=1 bash --login"
+    }
+  }
+}
+

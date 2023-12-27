@@ -1,0 +1,33 @@
+services:
+  main:
+    image: registry.gitlab.com/charliez0-images/devops/${JETBRAINS_PRODUCT:-idea}${BRANCH-/dev}:${TAG:-rolling}
+    pull_policy: always
+    ports:
+      - 8022:8022
+    volumes:
+      - /mnt/upper/upper/tmp:/tmp
+      - rootfs:/root
+      - containerfs:/home/container
+      - logfs:/var/log
+    networks:
+      default:
+        aliases:
+          - ${HOSTNAME}
+    read_only: false
+    restart: always
+    tmpfs:
+      - /run
+    shm_size: 2gb
+    stop_grace_period: 10s
+    init: true
+    stdin_open: true
+    tty: true
+    privileged: true
+
+volumes:
+  rootfs:
+  containerfs:
+  logfs:
+
+networks:
+  default:

@@ -1,0 +1,17 @@
+HostKey /home/container/ssh_host_rsa_key
+HostKey /home/container/ssh_host_ecdsa_key
+HostKey /home/container/ssh_host_ed25519_key
+
+PermitRootLogin no
+KbdInteractiveAuthentication no
+PasswordAuthentication no
+
+UsePAM yes
+PrintMotd no
+X11Forwarding yes
+PermitTunnel yes
+ClientAliveInterval 60
+ClientAliveCountMax 5
+
+AcceptEnv LANG LC_*
+Subsystem	sftp	/usr/lib/openssh/sftp-server

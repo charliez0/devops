@@ -1,0 +1,83 @@
+default:
+  interruptible: true
+
+include:
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
+
+build-docker:
+  image: docker:cli
+  stage: build
+  services:
+    - name: docker:dind
+      command: ["--experimental"]
+  parallel:
+    matrix:
+      - VERSION: [latest, rolling, devel]
+        SOFTWARE: [clion, idea, pycharm]
+  cache:
+    key: $VERSION
+    policy: push
+  variables:
+    DOCKER_DEV_SHA_NAME: $CI_REGISTRY_IMAGE/$SOFTWARE/$CI_COMMIT_REF_SLUG:$CI_COMMIT_SHA-$VERSION
+    DOCKER_RELEASE_SHA_NAME: $CI_REGISTRY_IMAGE/$SOFTWARE:$CI_COMMIT_SHA-$VERSION
+    DOCKER_DEV_TAG_NAME: $CI_REGISTRY_IMAGE/$SOFTWARE/$CI_COMMIT_REF_SLUG:$VERSION
+    DOCKER_RELEASE_TAG_NAME: $CI_REGISTRY_IMAGE/$SOFTWARE:$VERSION
+  tags:
+    - saas-linux-medium-amd64
+  before_script:
+    - |
+      apk add --update --no-cache python3 py3-pip
+      pip3 install --break-system-packages asciinema
+      mkdir -p ~/.config/asciinema
+      echo "$ASCIINEMA_INSTALL_ID" > ~/.config/asciinema/install-id
+  script:
+    - |
+      asciinema rec --cols 132 -c 'echo "$CI_DEPLOY_PASSWORD" | docker login -u "$CI_DEPLOY_USER" --password-stdin $CI_REGISTRY
+      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+        docker build -f "Dockerfile.$SOFTWARE" --no-cache --build-arg VERSION=$VERSION --squash --pull -t "$DOCKER_RELEASE_SHA_NAME" -t "$DOCKER_RELEASE_TAG_NAME" .
+        docker push "$DOCKER_RELEASE_SHA_NAME"
+        docker push "$DOCKER_RELEASE_TAG_NAME"
+      else
+        docker build -f "Dockerfile.$SOFTWARE" --no-cache --build-arg VERSION=$VERSION --squash --pull -t "$DOCKER_DEV_SHA_NAME" -t "$DOCKER_DEV_TAG_NAME" .
+        docker push "$DOCKER_DEV_SHA_NAME"
+        docker push "$DOCKER_DEV_TAG_NAME"
+      fi' rec.cast
+    - asciinema upload rec.cast || true
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      exists:
+        - Dockerfile.$SOFTWARE
+  artifacts:
+    paths:
+      - rec.cast
+  retry: 1
+
+container_scanning:
+  stage: test
+  parallel:
+    matrix:
+      - VERSION: [latest, rolling, devel]
+        SOFTWARE: [clion, idea, pycharm]
+  cache:
+    key: $VERSION
+    policy: pull
+  variables:
+    CS_DISABLE_LANGUAGE_VULNERABILITY_SCAN: "false"
+    CS_IMAGE: $CI_REGISTRY_IMAGE/$SOFTWARE/$CI_COMMIT_REF_SLUG:$CI_COMMIT_SHA-$VERSION
+    CS_DOCKERFILE_PATH: Dockerfile.$SOFTWARE
+    GIT_STRATEGY: fetch
+  tags:
+    - saas-linux-medium-amd64
+  before_script:
+    - |
+      sudo apt update && sudo apt install -y asciinema
+      mkdir -p ~/.config/asciinema
+      echo "$ASCIINEMA_INSTALL_ID" > ~/.config/asciinema/install-id
+      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+        export CS_IMAGE=$CI_REGISTRY_IMAGE/$SOFTWARE:$CI_COMMIT_SHA-$VERSION
+      fi
+  script:
+    - asciinema rec --cols 162 -y -c "gtcs scan"
+secret_detection:
+  stage: test
